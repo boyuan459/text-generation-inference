@@ -1,12 +1,15 @@
 use crate::infer::InferError;
 use crate::infer::InferStreamResponse;
+use crate::infer::IntermediateResponse;
 use crate::validation::ValidGenerateRequest;
 use nohash_hasher::{BuildNoHashHasher, IntMap};
+use tokio::sync::mpsc::UnboundedSender;
 use std::collections::VecDeque;
 use text_generation_client::{Batch, Request};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tracing::{info_span, instrument, Span};
+use tokio::sync::mpsc;
 
 /// Queue entry
 #[derive(Debug)]
@@ -15,6 +18,7 @@ pub(crate) struct Entry {
     pub request: ValidGenerateRequest,
     /// Response sender to communicate between the Infer struct and the batching_task
     pub response_tx: flume::Sender<Result<InferStreamResponse, InferError>>,
+    pub intermediate_tx: UnboundedSender<Result<IntermediateResponse, InferError>>,
     /// Span that will live as long as entry
     pub span: Span,
     /// Temporary span used as a guard when logging inference, wait times...
@@ -307,6 +311,7 @@ mod tests {
         flume::Receiver<Result<InferStreamResponse, InferError>>,
     ) {
         let (response_tx, receiver_tx) = flume::unbounded();
+        let (intermediate_tx, intermediate_rx) = mpsc::unbounded_channel();
 
         let entry = Entry {
             request: ValidGenerateRequest {
@@ -332,6 +337,7 @@ mod tests {
                 top_n_tokens: 0,
             },
             response_tx,
+            intermediate_tx,
             span: info_span!("entry"),
             temp_span: None,
             queue_time: Instant::now(),

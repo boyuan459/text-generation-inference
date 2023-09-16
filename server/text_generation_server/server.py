@@ -79,7 +79,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 request.batch, self.model.tokenizer, self.model.dtype, self.model.device
             )
 
-        generations, next_batch = self.model.generate_token(batch)
+        generations, next_batch, _ = self.model.generate_token(batch)
         self.cache.set(next_batch)
 
         return generate_pb2.PrefillResponse(
@@ -106,12 +106,15 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
         else:
             batch = batches[0]
 
-        generations, next_batch = self.model.generate_token(batch)
+        generations, next_batch, intermediates = self.model.generate_token(batch)
         self.cache.set(next_batch)
+
+        print("Decode", intermediates)
 
         return generate_pb2.DecodeResponse(
             generations=[generation.to_pb() for generation in generations],
             batch=next_batch.to_pb() if next_batch else None,
+            intermediates=[intermediate.to_pb() for intermediate in intermediates]
         )
 
 

@@ -12,6 +12,7 @@ from text_generation_server.models.types import (
     Batch,
     PrefillTokens,
     Generation,
+    Intermediate,
     GeneratedText,
     TopTokens,
 )
@@ -561,7 +562,7 @@ class CausalLM(Model):
     @tracer.start_as_current_span("generate_token")
     def generate_token(
         self, batch: CausalLMBatch
-    ) -> Tuple[List[Generation], Optional[CausalLMBatch]]:
+    ) -> Tuple[List[Generation], Optional[CausalLMBatch], List[Intermediate]]:
         # slice the attention mask to the correct shape
         attention_mask = batch.attention_mask[:, : -batch.padding_right_offset]
 
@@ -574,6 +575,7 @@ class CausalLM(Model):
 
         # Results
         generations: List[Generation] = []
+        intermediates: List[Intermediate] = []
         stopped = True
 
         batch_top_token_ids, batch_top_token_logprobs = batch_top_tokens(
@@ -626,7 +628,13 @@ class CausalLM(Model):
             next_token_text, prefix_offset, read_offset = self.decode_token(
                 all_input_ids[:, 0], prefix_offset, read_offset
             )
-
+            print("AAAAAAAAA", next_token_id_squeezed, next_token_text)
+            intermediates.append(
+                Intermediate(
+                    request_id=request.id,
+                    token=next_token_text,
+                )
+            )
             # Evaluate stopping criteria
             stop, reason = stopping_criteria(
                 next_token_id_squeezed,
@@ -717,7 +725,7 @@ class CausalLM(Model):
 
         # We finished all generations in the batch; there is no next batch
         if stopped:
-            return generations, None
+            return generations, None, intermediates
 
         # Slice unused values from prefill
         batch.input_ids = batch.input_ids[:, :1]
@@ -733,4 +741,4 @@ class CausalLM(Model):
         # Update past key values
         batch.past_key_values = past
 
-        return generations, batch
+        return generations, batch, intermediates

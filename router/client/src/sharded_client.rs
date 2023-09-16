@@ -1,3 +1,4 @@
+use crate::pb::generate::v1::Intermediate;
 /// Multi shard Client
 use crate::{Batch, CachedBatch, Client, Generation, HealthResponse, ShardInfo};
 use crate::{ClientError, Result};
@@ -136,15 +137,15 @@ impl ShardedClient {
     pub async fn decode(
         &mut self,
         batches: Vec<CachedBatch>,
-    ) -> Result<(Vec<Generation>, Option<CachedBatch>)> {
+    ) -> Result<(Vec<Generation>, Option<CachedBatch>, Vec<Intermediate>)> {
         let futures: Vec<_> = self
             .clients
             .iter_mut()
             .map(|client| Box::pin(client.decode(batches.clone())))
             .collect();
-        let results: Result<Vec<(Vec<Generation>, Option<CachedBatch>)>> =
+        let results: Result<Vec<(Vec<Generation>, Option<CachedBatch>, Vec<Intermediate>)>> =
             join_all(futures).await.into_iter().collect();
-        merge_generations(results?)
+            merge_generations_v2(results?)
     }
 }
 
@@ -158,4 +159,17 @@ fn merge_generations(
         generations.append(&mut shard_generations);
     }
     Ok((generations, next_batch))
+}
+
+/// Merge generations from the different model shards
+fn merge_generations_v2(
+    mut results: Vec<(Vec<Generation>, Option<CachedBatch>, Vec<Intermediate>)>,
+) -> Result<(Vec<Generation>, Option<CachedBatch>, Vec<Intermediate>)> {
+    let (mut generations, next_batch, mut intermediates) = results.pop().ok_or(ClientError::EmptyResults)?;
+
+    for (mut shard_generations, _, mut shared_intermediates) in results.into_iter() {
+        generations.append(&mut shard_generations);
+        intermediates.append(&mut shared_intermediates);
+    }
+    Ok((generations, next_batch, intermediates))
 }

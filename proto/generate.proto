@@ -173,6 +173,13 @@ message Generation {
     TopTokens top_tokens = 8;
 }
 
+message Intermediate {
+    /// Request ID
+    uint64 request_id = 1;
+    /// Text
+    string token = 2;
+}
+
 message FilterBatchRequest {
     /// Batch ID
     uint64 batch_id = 1;
@@ -208,6 +215,8 @@ message DecodeResponse {
     repeated Generation generations = 1;
     /// Next batch (cached)
     optional CachedBatch batch = 2;
+    /// Decodes
+    repeated Intermediate intermediates = 3;
 }
 
 message WarmupRequest {

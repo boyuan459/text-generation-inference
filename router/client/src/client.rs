@@ -170,9 +170,10 @@ impl Client {
     pub async fn decode(
         &mut self,
         batches: Vec<CachedBatch>,
-    ) -> Result<(Vec<Generation>, Option<CachedBatch>)> {
+    ) -> Result<(Vec<Generation>, Option<CachedBatch>, Vec<Intermediate>)> {
         let request = tonic::Request::new(DecodeRequest { batches }).inject_context();
         let response = self.stub.decode(request).await?.into_inner();
-        Ok((response.generations, response.batch))
+        println!("{:?}", response.intermediates);
+        Ok((response.generations, response.batch, response.intermediates))
     }
 }

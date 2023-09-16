@@ -118,3 +118,14 @@ class Generation:
             else None,
             top_tokens=self.top_tokens.to_pb() if self.top_tokens is not None else None,
         )
+
+@dataclass
+class Intermediate:
+    request_id: int
+    token: str
+
+    def to_pb(self) -> generate_pb2.Intermediate:
+        return generate_pb2.Intermediate(
+            request_id=self.request_id,
+            token=self.token,
+        )

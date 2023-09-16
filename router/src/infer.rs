@@ -13,12 +13,13 @@ use std::sync::{
 };
 use std::time::Duration;
 use text_generation_client::{
-    Batch, CachedBatch, ClientError, GeneratedText, Generation, PrefillTokens, ShardedClient,
+    Batch, CachedBatch, ClientError, GeneratedText, Generation, PrefillTokens, ShardedClient, Intermediate as IntermediateRequest,
 };
 use thiserror::Error;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, TryAcquireError};
 use tokio::time::Instant;
 use tracing::{info_span, instrument, Instrument, Span};
+use tokio::sync::mpsc;
 
 /// Inference struct
 #[derive(Clone)]
@@ -114,10 +115,13 @@ impl Infer {
         // MPSC channel to communicate with the background batching task
         let (response_tx, response_rx) = flume::unbounded();
 
+        let (intermediate_tx, mut intermediate_rx) = mpsc::unbounded_channel();
+
         // Append the request to the queue
         self.queue.append(Entry {
             request: valid_request,
             response_tx,
+            intermediate_tx,
             span: Span::current(),
             temp_span: None,
             queue_time: Instant::now(),
@@ -127,6 +131,17 @@ impl Infer {
         // Notify the background task that we have a new entry in the queue that needs
         // to be batched
         self.shared.batching_task.notify_one();
+
+        loop {
+            let intermediate_response = intermediate_rx.recv().await.unwrap()
+            .map_err(|err| InferError::GenerationError(err.to_string()))?;
+
+            println!("intermediate response: {:?}", intermediate_response);
+            
+            if intermediate_response.is_end {
+                break;
+            }
+        }
 
         // Return stream
         Ok((permit, response_rx.into_stream()))
@@ -382,7 +397,7 @@ async fn prefill(
             // Update health
             generation_health.store(true, Ordering::SeqCst);
             // Send generated tokens and filter stopped entries
-            filter_send_generations(generations, entries);
+            filter_send_generations(generations, entries, None);
 
             // Filter next batch and remove requests that were stopped
             let next_batch = filter_batch(client, next_batch, entries).await;
@@ -415,11 +430,11 @@ async fn decode(
     metrics::increment_counter!("tgi_batch_inference_count", "method" => "decode");
 
     match client.decode(batches).await {
-        Ok((generations, next_batch)) => {
+        Ok((generations, next_batch, intermediates)) => {
             // Update health
             generation_health.store(true, Ordering::SeqCst);
             // Send generated tokens and filter stopped entries
-            filter_send_generations(generations, entries);
+            filter_send_generations(generations, entries, Some(intermediates));
 
             // Filter next batch and remove requests that were stopped
             let next_batch = filter_batch(client, next_batch, entries).await;
@@ -477,7 +492,27 @@ async fn filter_batch(
 /// Send one or multiple `InferStreamResponse` to Infer for all `entries`
 /// and filter entries
 #[instrument(skip_all)]
-fn filter_send_generations(generations: Vec<Generation>, entries: &mut IntMap<u64, Entry>) {
+fn filter_send_generations(generations: Vec<Generation>, entries: &mut IntMap<u64, Entry>, intermediates: Option<Vec<IntermediateRequest>>) {
+    match intermediates {
+        None => {
+            println!("Nothing intermediate");
+        },
+        Some(texts) => {
+            println!("intermediates: {:?}", texts);
+            texts.into_iter().for_each(|intermediate| {
+                let id = intermediate.request_id;
+                let entry = entries.get(&id)
+                    .expect("ID not found in entries. This is a bug.");
+
+                let response = IntermediateResponse {
+                    is_end: false,
+                    token: intermediate.token,
+                };
+
+                entry.intermediate_tx.send(Ok(response)).unwrap_or(());
+            })
+        }
+    }
     generations.into_iter().for_each(|generation| {
         let id = generation.request_id;
         // Get entry
@@ -485,6 +520,10 @@ fn filter_send_generations(generations: Vec<Generation>, entries: &mut IntMap<u6
         let entry = entries
             .get(&id)
             .expect("ID not found in entries. This is a bug.");
+
+        entry.intermediate_tx.send(Ok(
+            IntermediateResponse { is_end: true, token: String::from("") }
+        )).unwrap_or(());
 
         // Create and enter a span to link this function back to the entry
         let _span = info_span!(parent: entry.temp_span.as_ref().expect("batch_span is None. This is a bug."), "send_generation", generation = ?generation).entered();
@@ -622,6 +661,12 @@ pub(crate) struct InferResponse {
     pub(crate) queued: Instant,
     pub(crate) start: Instant,
     pub(crate) top_tokens: Vec<Vec<Token>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct IntermediateResponse {
+    pub(crate) is_end: bool,
+    pub(crate) token: String,
 }
 
 #[derive(Debug, Error)]
