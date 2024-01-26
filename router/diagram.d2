@@ -1,0 +1,51 @@
+direction: right
+
+/generate_stream -> axum SSE:stream
+
+axum SSE -> infer
+
+infer -> queue batching:call generate_stream
+
+queue batching -> batching_task:notify_one
+
+batching_task -> flume channel:response_tx
+
+batching_task -> prefill/decode
+
+prefill/decode -> TGI Server
+
+TGI Server -> prefill/decode {
+  style: {
+    stroke: orange
+  }
+}
+
+prefill/decode -> flume channel:send_response {
+  style: {
+    stroke: orange
+  }
+}
+
+flume channel -> batching_task:response_tx {
+  style: {
+    stroke: orange
+  }
+}
+
+batching_task -> infer:response_rx.into_stream {
+  style: {
+    stroke: orange
+  }
+}
+
+infer -> axum SSE:response_stream {
+  style: {
+    stroke: orange
+  }
+}
+
+axum SSE -> /generate_stream:SSE stream {
+  style: {
+    stroke: orange
+  }
+}
