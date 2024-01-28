@@ -12,9 +12,9 @@ batching_task -> flume channel:response_tx
 
 batching_task -> prefill/decode
 
-prefill/decode -> TGI Server
+prefill/decode -> TGI Server:gRPC
 
-TGI Server -> prefill/decode {
+TGI Server -> prefill/decode:gRPC {
   style: {
     stroke: orange
   }
